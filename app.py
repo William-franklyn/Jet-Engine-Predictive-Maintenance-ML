@@ -61,3 +61,19 @@ chosen_sensors = st.multiselect(
 if chosen_sensors:
     st.line_chart(engine_df.set_index("time_in_cycles")[chosen_sensors])
 st.caption("Sensor values are z-score scaled, not raw physical units.")
+
+st.divider()
+st.subheader("Upload sensor readings for a live prediction")
+st.caption(
+    "CSV must use the same scaled feature columns as the training data: "
+    + ", ".join(FEATURE_COLS)
+)
+uploaded = st.file_uploader("Upload CSV", type="csv")
+if uploaded is not None:
+    upload_df = pd.read_csv(uploaded)
+    missing_cols = [c for c in FEATURE_COLS if c not in upload_df.columns]
+    if missing_cols:
+        st.error(f"Uploaded CSV is missing required columns: {', '.join(missing_cols)}")
+    else:
+        upload_df["predicted_RUL"] = predict_rul(upload_df[FEATURE_COLS])
+        st.dataframe(upload_df)
