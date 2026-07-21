@@ -36,3 +36,19 @@ max_cycle = int(engine_df["time_in_cycles"].max())
 
 st.header(f"Engine {selected_engine}")
 st.caption(f"{len(engine_df)} recorded cycles ({min_cycle}-{max_cycle}).")
+
+selected_cycle = st.slider(
+    "Cycle", min_value=min_cycle, max_value=max_cycle, value=max_cycle
+)
+current_row = engine_df.loc[engine_df["time_in_cycles"] == selected_cycle].iloc[0]
+
+st.metric("Current cycle", selected_cycle)
+
+st.subheader("Sensor readings")
+sensor_cols = [c for c in engine_df.columns if c.startswith("sensor_")]
+chosen_sensors = st.multiselect(
+    "Sensors to plot", sensor_cols, default=sensor_cols[:4]
+)
+if chosen_sensors:
+    st.line_chart(engine_df.set_index("time_in_cycles")[chosen_sensors])
+st.caption("Sensor values are z-score scaled, not raw physical units.")
