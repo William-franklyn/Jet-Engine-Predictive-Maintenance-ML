@@ -7,6 +7,8 @@ Run with: streamlit run app.py
 import pandas as pd
 import streamlit as st
 
+from model import FEATURE_COLS, predict_rul
+
 DATA_PATH = "nasa_cmapss_FD001_scaled.csv"
 
 st.set_page_config(page_title="Turbofan RUL Dashboard", layout="wide")
@@ -41,8 +43,15 @@ selected_cycle = st.slider(
     "Cycle", min_value=min_cycle, max_value=max_cycle, value=max_cycle
 )
 current_row = engine_df.loc[engine_df["time_in_cycles"] == selected_cycle].iloc[0]
+predicted_rul = predict_rul(current_row[FEATURE_COLS].to_frame().T)[0]
 
-st.metric("Current cycle", selected_cycle)
+col1, col2 = st.columns(2)
+col1.metric("Current cycle", selected_cycle)
+col2.metric("Predicted RUL (cycles)", f"{predicted_rul:.0f}")
+st.caption(
+    "Prediction is a placeholder heuristic (see model.py), not a trained "
+    "model's output."
+)
 
 st.subheader("Sensor readings")
 sensor_cols = [c for c in engine_df.columns if c.startswith("sensor_")]
