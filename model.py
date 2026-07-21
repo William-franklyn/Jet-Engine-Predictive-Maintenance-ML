@@ -1,35 +1,46 @@
 """
-Placeholder RUL prediction — NOT a trained model.
+RUL prediction.
 
-TODO: replace the body of predict_rul() with inference from a trained model
-(Random Forest / Logistic Regression per the team's plan, or an LSTM if the
-team moves to one). The dashboard only ever calls this function, so
-swapping in a real model is a one-function change.
+Loads the trained Random Forest (random_forest_model.pkl, produced by
+save_model.py) if it exists. Falls back to a placeholder heuristic — NOT a
+trained model — so the dashboard still shows something before the pickle
+exists. Run `python save_model.py` (after adding train_FD001_scaled.csv to
+the repo root) to train and save the real model.
 """
 
+import os
+
+import joblib
 import numpy as np
 import pandas as pd
 
+MODEL_PATH = "random_forest_model.pkl"
+
 FEATURE_COLS = [
-    "operational_setting_1",
-    "sensor_2", "sensor_3", "sensor_4", "sensor_6", "sensor_7", "sensor_8",
+    "op_setting_1", "op_setting_2",
+    "sensor_2", "sensor_3", "sensor_4", "sensor_7", "sensor_8",
     "sensor_9", "sensor_11", "sensor_12", "sensor_13", "sensor_14",
     "sensor_15", "sensor_17", "sensor_20", "sensor_21",
 ]
 
-STUB_RUL_CAP = 125
+RUL_CAP = 125
 
 
-def predict_rul(rows: pd.DataFrame) -> np.ndarray:
-    """Heuristic stand-in for a trained model.
+def load_model():
+    if os.path.exists(MODEL_PATH):
+        return joblib.load(MODEL_PATH)
+    return None
 
-    Maps the average magnitude of the (already z-score scaled) sensor
-    readings to a predicted RUL: readings further from baseline (0) are
-    treated as more degraded and given a lower predicted RUL. This is only
-    meant to give the dashboard something plausible to show before a real
-    model is trained.
+
+def predict_rul(rows: pd.DataFrame, model=None) -> np.ndarray:
+    """Predict RUL for rows containing FEATURE_COLS.
+
+    Uses `model.predict()` when a trained model is passed in; otherwise
+    falls back to a heuristic that maps average scaled-sensor magnitude to
+    a predicted RUL (further from baseline = more degraded = lower RUL).
     """
-    present_cols = [c for c in FEATURE_COLS if c in rows.columns]
-    magnitude = rows[present_cols].abs().mean(axis=1)
-    predicted = STUB_RUL_CAP * np.exp(-magnitude)
-    return np.clip(predicted, 0, STUB_RUL_CAP).round(1).to_numpy()
+    X = rows[FEATURE_COLS]
+    if model is not None:
+        return np.clip(model.predict(X.values), 0, RUL_CAP).round(1)
+    magnitude = X.abs().mean(axis=1)
+    return np.clip(RUL_CAP * np.exp(-magnitude), 0, RUL_CAP).round(1).to_numpy()

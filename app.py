@@ -1,79 +1,147 @@
 """
-Streamlit dashboard for the AI4ALL Group 04C turbofan RUL project.
+RUL Prediction Dashboard — Team 04C
+AI4ALL Ignite SU26 | NASA C-MAPSS Turbofan
+
+Combines the engine-browser view with CSV-upload and manual-input
+prediction into one app, all backed by the same model (see model.py).
 
 Run with: streamlit run app.py
+Requires: streamlit, numpy, pandas, scikit-learn, joblib
 """
+
+import os
 
 import pandas as pd
 import streamlit as st
 
-from model import FEATURE_COLS, predict_rul
+from model import FEATURE_COLS, RUL_CAP, load_model, predict_rul
 
-DATA_PATH = "nasa_cmapss_FD001_scaled.csv"
+DATA_PATH = "train_FD001_scaled.csv"
 
-st.set_page_config(page_title="Turbofan RUL Dashboard", layout="wide")
+st.set_page_config(page_title="Turbofan RUL Predictor", page_icon="✈️", layout="wide")
+
+
+@st.cache_resource
+def get_model():
+    return load_model()
 
 
 @st.cache_data
-def load_data() -> pd.DataFrame:
-    return pd.read_csv(DATA_PATH)
+def load_dataset():
+    if not os.path.exists(DATA_PATH):
+        return None
+    data = pd.read_csv(DATA_PATH)
+    max_cycle = data.groupby("unit")["cycle"].max().rename("max_cycle")
+    data = data.join(max_cycle, on="unit")
+    data["RUL"] = (data["max_cycle"] - data["cycle"]).clip(upper=RUL_CAP)
+    return data.drop(columns=["max_cycle"])
 
 
-df = load_data()
+model = get_model()
+dataset = load_dataset()
 
 with st.sidebar:
-    st.title("Turbofan Engine RUL Dashboard")
+    st.title("✈️ Turbofan RUL Predictor")
+    st.caption("Team 04C · AI4ALL Ignite SU26 · NASA C-MAPSS FD001")
     st.markdown(
-        "**AI4ALL Group 04C** — predicting a turbofan engine's Remaining "
-        "Useful Life (RUL) from NASA C-MAPSS sensor telemetry, to support "
-        "predictive maintenance instead of fixed replacement schedules."
+        "Predicting a turbofan engine's Remaining Useful Life (RUL) from "
+        "sensor telemetry, to support predictive maintenance instead of "
+        "fixed replacement schedules."
     )
+    if model is None:
+        st.warning(
+            "No trained model found — showing placeholder predictions. "
+            "Run `python save_model.py` (after adding "
+            f"`{DATA_PATH}`) to train the real one."
+        )
     st.divider()
-    engine_ids = sorted(df["unit_number"].unique().tolist())
-    selected_engine = st.selectbox("Select engine", engine_ids)
+    mode = st.radio("Mode", ["Browse engine", "Upload CSV", "Manual input"])
 
-engine_df = df[df["unit_number"] == selected_engine].sort_values("time_in_cycles")
-min_cycle = int(engine_df["time_in_cycles"].min())
-max_cycle = int(engine_df["time_in_cycles"].max())
+# ── Browse engine ────────────────────────────────────────────────────────────
+if mode == "Browse engine":
+    st.header("Browse a training-set engine")
+    if dataset is None:
+        st.error(
+            f"`{DATA_PATH}` not found in the repo root. Add it (ask a "
+            "teammate for the file) to enable this mode."
+        )
+    else:
+        engine_ids = sorted(dataset["unit"].unique().tolist())
+        selected_engine = st.selectbox("Select engine", engine_ids)
 
-st.header(f"Engine {selected_engine}")
-st.caption(f"{len(engine_df)} recorded cycles ({min_cycle}-{max_cycle}).")
+        engine_df = dataset[dataset["unit"] == selected_engine].sort_values("cycle")
+        min_cycle = int(engine_df["cycle"].min())
+        max_cycle = int(engine_df["cycle"].max())
+        st.caption(f"{len(engine_df)} recorded cycles ({min_cycle}-{max_cycle}).")
 
-selected_cycle = st.slider(
-    "Cycle", min_value=min_cycle, max_value=max_cycle, value=max_cycle
-)
-current_row = engine_df.loc[engine_df["time_in_cycles"] == selected_cycle].iloc[0]
-predicted_rul = predict_rul(current_row[FEATURE_COLS].to_frame().T)[0]
+        selected_cycle = st.slider(
+            "Cycle", min_value=min_cycle, max_value=max_cycle, value=max_cycle
+        )
+        current_row = engine_df.loc[engine_df["cycle"] == selected_cycle].iloc[[0]]
+        predicted_rul = predict_rul(current_row, model)[0]
 
-col1, col2 = st.columns(2)
-col1.metric("Current cycle", selected_cycle)
-col2.metric("Predicted RUL (cycles)", f"{predicted_rul:.0f}")
-st.caption(
-    "Prediction is a placeholder heuristic (see model.py), not a trained "
-    "model's output."
-)
+        col1, col2 = st.columns(2)
+        col1.metric("Current cycle", selected_cycle)
+        col2.metric("Predicted RUL (cycles)", f"{predicted_rul:.0f}")
 
-st.subheader("Sensor readings")
-sensor_cols = [c for c in engine_df.columns if c.startswith("sensor_")]
-chosen_sensors = st.multiselect(
-    "Sensors to plot", sensor_cols, default=sensor_cols[:4]
-)
-if chosen_sensors:
-    st.line_chart(engine_df.set_index("time_in_cycles")[chosen_sensors])
-st.caption("Sensor values are z-score scaled, not raw physical units.")
+        st.subheader("Sensor readings")
+        sensor_cols = [c for c in FEATURE_COLS if c.startswith("sensor_")]
+        chosen_sensors = st.multiselect(
+            "Sensors to plot", sensor_cols, default=sensor_cols[:4]
+        )
+        if chosen_sensors:
+            st.line_chart(engine_df.set_index("cycle")[chosen_sensors])
+        st.caption("Sensor values are z-score scaled, not raw physical units.")
+
+# ── Upload CSV ───────────────────────────────────────────────────────────────
+elif mode == "Upload CSV":
+    st.header("Upload sensor data for live predictions")
+    st.caption(
+        "CSV must be pre-scaled (z-score standardized) with columns: "
+        + ", ".join(FEATURE_COLS)
+    )
+    uploaded = st.file_uploader("Choose a CSV file", type="csv")
+    if uploaded:
+        upload_df = pd.read_csv(uploaded)
+        st.write("Preview:", upload_df.head())
+
+        missing = [c for c in FEATURE_COLS if c not in upload_df.columns]
+        if missing:
+            st.error(f"Missing columns: {missing}")
+        else:
+            upload_df["Predicted RUL"] = predict_rul(upload_df, model)
+            st.success("Predictions complete!")
+            id_cols = [c for c in ("unit", "cycle") if c in upload_df.columns]
+            st.dataframe(upload_df[id_cols + ["Predicted RUL"]] if id_cols else upload_df)
+            csv_out = upload_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "Download Predictions CSV", csv_out, "rul_predictions.csv", "text/csv"
+            )
+
+# ── Manual input ─────────────────────────────────────────────────────────────
+else:
+    st.header("Manual sensor input")
+    st.caption("Enter a single engine's sensor readings (z-score standardized).")
+
+    col1, col2 = st.columns(2)
+    inputs = {}
+    for i, feat in enumerate(FEATURE_COLS):
+        col = col1 if i % 2 == 0 else col2
+        inputs[feat] = col.number_input(feat, value=0.0, format="%.4f")
+
+    if st.button("Predict RUL", type="primary"):
+        row = pd.DataFrame([inputs])
+        pred = predict_rul(row, model)[0]
+        st.metric("Predicted Remaining Useful Life", f"{pred:.1f} cycles")
+        if pred < 30:
+            st.error("⚠️ Engine approaching end of life — maintenance recommended soon.")
+        elif pred < 60:
+            st.warning("\U0001f536 Moderate degradation detected — schedule inspection.")
+        else:
+            st.success("✅ Engine health looks good.")
 
 st.divider()
-st.subheader("Upload sensor readings for a live prediction")
 st.caption(
-    "CSV must use the same scaled feature columns as the training data: "
-    + ", ".join(FEATURE_COLS)
+    "Model: Random Forest (RMSE 20.11, MAE 15.09 on FD001) when trained; "
+    "placeholder heuristic otherwise. RUL capped at 125 cycles."
 )
-uploaded = st.file_uploader("Upload CSV", type="csv")
-if uploaded is not None:
-    upload_df = pd.read_csv(uploaded)
-    missing_cols = [c for c in FEATURE_COLS if c not in upload_df.columns]
-    if missing_cols:
-        st.error(f"Uploaded CSV is missing required columns: {', '.join(missing_cols)}")
-    else:
-        upload_df["predicted_RUL"] = predict_rul(upload_df[FEATURE_COLS])
-        st.dataframe(upload_df)
