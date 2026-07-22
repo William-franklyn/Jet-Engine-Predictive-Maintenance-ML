@@ -12,7 +12,7 @@
 > many flight cycles remain before failure — so airlines can move from *fixed*
 > replacement schedules to **predictive maintenance**.
 
-**🔗 Live app:** `https://<your-app>.streamlit.app` &nbsp;·&nbsp; **📊 Model:** Random Forest — **RMSE 18.0 / MAE 13.3 / R² 0.81** on unseen engines
+**🔗 Live app:** **[jet-engineml.streamlit.app](https://jet-engineml.streamlit.app)** &nbsp;·&nbsp; **📊 Model:** Random Forest — **RMSE 18.0 / MAE 13.3 / R² 0.81** on unseen engines
 
 ---
 
@@ -56,24 +56,22 @@ that estimator and wraps it in an interactive dashboard.
 
 The Streamlit app has three modes, all backed by the same trained model.
 
-> **📸 Screenshots:** add three PNGs to `docs/images/` named exactly as below (grab
-> them from the running app — `streamlit run app.py`). Until then these render as
-> captions.
+> ### ▶️ **[Try it live → jet-engineml.streamlit.app](https://jet-engineml.streamlit.app)**
+> The deployed dashboard trains its model on startup from the committed dataset — no
+> setup required to explore all three modes below.
 
-**1. Browse engine** — pick one of the 100 training engines, scrub through its life
-cycle by cycle, and watch its sensors and predicted RUL evolve.
-
-![Browse engine mode](docs/images/dashboard-browse.png)
+**1. Browse engine** — pick one of the 100 training engines and scrub through its life
+cycle by cycle, watching its sensors and predicted RUL evolve. For example, engine 1 at
+its final cycle (192) is correctly predicted at just **4 cycles** of life remaining, and
+the sensor charts show the characteristic upward drift near failure — the degradation
+signal the model keys on.
 
 **2. Upload CSV** — upload pre-scaled sensor readings and get a predicted RUL per row,
-downloadable as CSV.
-
-![Upload CSV mode](docs/images/dashboard-upload.png)
+downloadable as a results CSV.
 
 **3. Manual input** — hand-enter a single engine's 16 sensor/setting values and get an
-instant prediction with a color-coded maintenance recommendation.
-
-![Manual input mode](docs/images/dashboard-manual.png)
+instant prediction with a color-coded maintenance recommendation
+(🟢 healthy / 🟠 inspect / 🔴 maintenance soon).
 
 ---
 
