@@ -15,7 +15,6 @@ import pandas as pd
 import streamlit as st
 
 from model import FEATURE_COLS, RUL_CAP, load_model, predict_rul
-from save_model import train_full_model
 
 DATA_PATH = "nasa_cmapss_FD001_scaled.csv"
 
@@ -26,12 +25,19 @@ st.set_page_config(page_title="Turbofan RUL Predictor", page_icon="✈️", layo
 def get_model():
     # Prefer a pre-trained pickle (fast). On a fresh deployment the .pkl isn't
     # in the repo (it's gitignored and >100MB), so train it once from the
-    # committed CSV — cached for the life of the process.
-    model = load_model()
-    if model is None and os.path.exists(DATA_PATH):
-        with st.spinner("First run: training the model (~10s)…"):
-            model = train_full_model(DATA_PATH)
-    return model
+    # committed CSV — cached for the life of the process. Import sklearn lazily
+    # and tolerate failure so an environment issue degrades to the placeholder
+    # heuristic instead of crashing the whole app.
+    try:
+        model = load_model()
+        if model is None and os.path.exists(DATA_PATH):
+            from save_model import train_full_model
+            with st.spinner("First run: training the model (~10s)…"):
+                model = train_full_model(DATA_PATH)
+        return model
+    except Exception as exc:  # noqa: BLE001 - surface, don't crash
+        st.warning(f"Model unavailable ({type(exc).__name__}); using placeholder.")
+        return None
 
 
 @st.cache_data
