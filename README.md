@@ -58,20 +58,35 @@ The Streamlit app has three modes, all backed by the same trained model.
 
 > ### ▶️ **[Try it live → jet-engineml.streamlit.app](https://jet-engineml.streamlit.app)**
 > The deployed dashboard trains its model on startup from the committed dataset — no
-> setup required to explore all three modes below.
+> setup required.
 
-**1. Browse engine** — pick one of the 100 training engines and scrub through its life
-cycle by cycle, watching its sensors and predicted RUL evolve. For example, engine 1 at
-its final cycle (192) is correctly predicted at just **4 cycles** of life remaining, and
-the sensor charts show the characteristic upward drift near failure — the degradation
-signal the model keys on.
+### 1. Browse engine
+Pick one of the 100 training engines and scrub through its life cycle by cycle, watching
+its predicted RUL update. Below, engine 1 at its final cycle (192) is correctly predicted
+at just **4 cycles** of life remaining:
 
-**2. Upload CSV** — upload pre-scaled sensor readings and get a predicted RUL per row,
-downloadable as a results CSV.
+![Browse engine mode](docs/images/dashboard-browse.png)
 
-**3. Manual input** — hand-enter a single engine's 16 sensor/setting values and get an
-instant prediction with a color-coded maintenance recommendation
-(🟢 healthy / 🟠 inspect / 🔴 maintenance soon).
+The sensor charts show the characteristic upward drift near failure — the degradation
+signal the model keys on:
+
+![Sensor readings over an engine's life](docs/images/dashboard-sensors.png)
+
+### 2. Upload CSV
+Upload pre-scaled sensor readings; the app validates the 16 required columns and previews
+the data:
+
+![Upload CSV mode](docs/images/dashboard-upload.png)
+
+…then returns a predicted RUL for every row, downloadable as a results CSV:
+
+![Upload predictions](docs/images/dashboard-predictions.png)
+
+### 3. Manual input
+Hand-enter a single engine's 16 sensor/setting values for an instant prediction with a
+color-coded maintenance recommendation (🟢 healthy / 🟠 inspect / 🔴 maintenance soon):
+
+![Manual input mode](docs/images/dashboard-manual.png)
 
 ---
 
