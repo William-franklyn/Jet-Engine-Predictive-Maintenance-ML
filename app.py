@@ -11,10 +11,14 @@ Requires: streamlit, numpy, pandas, scikit-learn, joblib
 
 import os
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
-from model import FEATURE_COLS, RUL_CAP, load_model, predict_rul
+from model import (
+    FEATURE_COLS, LSTM_SEQ_LEN, RUL_CAP,
+    load_lstm, load_model, predict_rul, predict_rul_sequence,
+)
 
 DATA_PATH = "nasa_cmapss_FD001_scaled.csv"
 
@@ -40,6 +44,14 @@ def get_model():
         return None
 
 
+@st.cache_resource
+def get_lstm():
+    """The LSTM is the primary model, but it's optional at runtime: it needs
+    torch and a checkpoint. If either is missing the app serves Random Forest
+    predictions instead of failing."""
+    return load_lstm()
+
+
 @st.cache_data
 def load_dataset():
     if not os.path.exists(DATA_PATH):
@@ -53,6 +65,7 @@ def load_dataset():
 
 
 model = get_model()
+lstm = get_lstm()
 dataset = load_dataset()
 
 with st.sidebar:
@@ -69,6 +82,16 @@ with st.sidebar:
             "placeholder predictions."
         )
     st.divider()
+    if lstm is not None:
+        st.success(
+            f"**LSTM active** — used whenever {LSTM_SEQ_LEN}+ cycles of history "
+            "are available. Random Forest covers the rest."
+        )
+    else:
+        st.info(
+            "**Random Forest active.** The LSTM is unavailable here (needs "
+            "`torch` and `lstm_rul_model.pt`)."
+        )
     mode = st.radio("Mode", ["Browse engine", "Upload CSV", "Manual input"])
 
 # ── Browse engine ────────────────────────────────────────────────────────────
@@ -89,11 +112,32 @@ if mode == "Browse engine":
             "Cycle", min_value=min_cycle, max_value=max_cycle, value=max_cycle
         )
         current_row = engine_df.loc[engine_df["cycle"] == selected_cycle].iloc[[0]]
-        predicted_rul = predict_rul(current_row, model)[0]
 
-        col1, col2 = st.columns(2)
+        # The LSTM reads the run-up to this cycle, not just the cycle itself —
+        # that trajectory is exactly what makes it more accurate than the RF.
+        history = engine_df[engine_df["cycle"] <= selected_cycle]
+        lstm_rul = predict_rul_sequence(history, lstm)
+
+        if lstm_rul is not None:
+            predicted_rul, used = lstm_rul, "LSTM"
+        else:
+            predicted_rul, used = predict_rul(current_row, model)[0], "Random Forest"
+
+        col1, col2, col3 = st.columns(3)
         col1.metric("Current cycle", selected_cycle)
         col2.metric("Predicted RUL (cycles)", f"{predicted_rul:.0f}")
+        col3.metric("Model used", used)
+
+        if used == "LSTM":
+            n = min(len(history), LSTM_SEQ_LEN)
+            st.caption(
+                f"Prediction made from the last **{n} cycles** of this engine's "
+                f"history"
+                + ("" if n == LSTM_SEQ_LEN else
+                   f" (padded to {LSTM_SEQ_LEN} — the engine is younger than the "
+                   f"window)")
+                + "."
+            )
 
         st.subheader("Sensor readings")
         sensor_cols = [c for c in FEATURE_COLS if c.startswith("sensor_")]
@@ -120,10 +164,43 @@ elif mode == "Upload CSV":
         if missing:
             st.error(f"Missing columns: {missing}")
         else:
-            upload_df["Predicted RUL"] = predict_rul(upload_df, model)
-            st.success("Predictions complete!")
+            # The LSTM needs to know which rows belong to which engine and in
+            # what order. With unit+cycle columns we can rebuild each row's
+            # history and use it; without them, every row is an isolated
+            # snapshot and only the Random Forest can score it.
+            has_sequence = {"unit", "cycle"}.issubset(upload_df.columns)
+
+            if lstm is not None and has_sequence:
+                upload_df = upload_df.sort_values(["unit", "cycle"]).reset_index(drop=True)
+                preds, used_lstm = [], 0
+                with st.spinner("Running the LSTM over each engine's history…"):
+                    for unit, grp in upload_df.groupby("unit", sort=False):
+                        for i in range(len(grp)):
+                            p = predict_rul_sequence(grp.iloc[: i + 1], lstm)
+                            preds.append(p)
+                            used_lstm += 1
+                upload_df["Predicted RUL"] = np.round(preds, 1)
+                upload_df["Model"] = "LSTM"
+                st.success(
+                    f"Predictions complete — **LSTM** used for all "
+                    f"{used_lstm:,} rows, reading each engine's history."
+                )
+            else:
+                upload_df["Predicted RUL"] = predict_rul(upload_df, model)
+                upload_df["Model"] = "Random Forest"
+                if lstm is not None and not has_sequence:
+                    st.info(
+                        "Used the **Random Forest**: this CSV has no `unit` and "
+                        "`cycle` columns, so there's no way to tell which rows "
+                        "form an engine's history. Add those two columns to get "
+                        "LSTM predictions."
+                    )
+                else:
+                    st.success("Predictions complete!")
+
             id_cols = [c for c in ("unit", "cycle") if c in upload_df.columns]
-            st.dataframe(upload_df[id_cols + ["Predicted RUL"]] if id_cols else upload_df)
+            show = id_cols + ["Predicted RUL", "Model"]
+            st.dataframe(upload_df[show] if id_cols else upload_df[["Predicted RUL", "Model"]])
             csv_out = upload_df.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "Download Predictions CSV", csv_out, "rul_predictions.csv", "text/csv"
@@ -133,6 +210,17 @@ elif mode == "Upload CSV":
 else:
     st.header("Manual sensor input")
     st.caption("Enter a single engine's sensor readings (z-score standardized).")
+
+    if lstm is not None:
+        st.info(
+            f"**This mode uses the Random Forest, not the LSTM** — and that's a "
+            f"limitation, not a bug. The LSTM predicts from a **trajectory**: it "
+            f"needs the last {LSTM_SEQ_LEN} cycles to see how fast the sensors are "
+            f"drifting. A single hand-entered snapshot has no history, so only a "
+            f"model that reads one cycle at a time can score it. Use **Browse "
+            f"engine** or upload a CSV with `unit`/`cycle` columns for LSTM "
+            f"predictions."
+        )
 
     col1, col2 = st.columns(2)
     inputs = {}
@@ -152,7 +240,15 @@ else:
             st.success("✅ Engine health looks good.")
 
 st.divider()
-st.caption(
-    "Model: tuned Random Forest (RMSE 18.01, MAE 13.33, R² 0.81 on a grouped "
-    "FD001 hold-out). RUL capped at 125 cycles."
-)
+if lstm is not None:
+    st.caption(
+        "Primary model: **LSTM** over a 30-cycle window — RMSE 16.19 ± 0.35, "
+        "MAE 11.59 ± 0.53, R² 0.850 on unseen engines (mean of 3 environments; "
+        "see docs/reproduction-log.md). Random Forest (RMSE 18.69) serves rows "
+        "with no usable history. RUL capped at 125 cycles."
+    )
+else:
+    st.caption(
+        "Model: tuned Random Forest (RMSE 18.69, MAE 13.82, R² 0.80 on a grouped "
+        "FD001 hold-out). RUL capped at 125 cycles."
+    )

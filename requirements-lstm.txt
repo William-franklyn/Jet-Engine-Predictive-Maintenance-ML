@@ -1,10 +1,8 @@
-# Extra dependency for the LSTM experiment (lstm_model.py, compare_models.py).
+# Kept for backwards compatibility — torch now lives in requirements.txt,
+# because the dashboard serves LSTM predictions and needs it at runtime.
 #
-# Deliberately NOT in requirements.txt: torch is a ~200MB install and the
-# deployed Streamlit dashboard doesn't import it. Keeping it out is what keeps
-# the Streamlit Cloud deploy inside free-tier limits.
-#
-#   pip install -r requirements.txt -r requirements-lstm.txt
+# Installing requirements.txt is sufficient:
+#   pip install -r requirements.txt
 #   python compare_models.py
 
-torch
+-r requirements.txt

@@ -169,6 +169,61 @@ def fig_training_curve():
     save(fig, "lstm_training_curve.png")
 
 
+# Measured on three environments — see docs/reproduction-log.md. Hard-coded
+# because they come from machines this script cannot run on; the local column
+# is cross-checked against the freshly measured CSV below.
+ENVIRONMENTS = {
+    "Local\nWindows":  {"LINEAR": 20.55, "RF": 18.69, "LSTM": 16.59},
+    "Kaggle\nLinux":   {"LINEAR": 20.55, "RF": 18.69, "LSTM": 15.93},
+    "Colab\nLinux":    {"LINEAR": 20.55, "RF": 18.69, "LSTM": 16.04},
+}
+
+
+def fig_reproduction():
+    """Three environments, one experiment. Shows the sklearn models pinned flat
+    and the LSTM varying slightly — while never approaching the RF line."""
+    reg = pd.read_csv(
+        require(os.path.join(DOCS, "model_comparison_regression.csv")),
+        index_col="model",
+    )
+    # Guard against the hard-coded local column drifting from a fresh run.
+    local = ENVIRONMENTS["Local\nWindows"]["LSTM"]
+    if abs(reg.loc["LSTM", "RMSE"] - local) > 0.005:
+        print(f"  WARNING: local LSTM RMSE is now {reg.loc['LSTM','RMSE']:.2f} "
+              f"but ENVIRONMENTS says {local} — update this script.")
+
+    names = list(ENVIRONMENTS)
+    x = list(range(len(names)))
+    fig, ax = plt.subplots(figsize=(8.2, 4.6))
+
+    for model, color, marker in [("LINEAR", MUTED, "s"), ("RF", ORANGE, "^"),
+                                 ("LSTM", BLUE, "o")]:
+        vals = [ENVIRONMENTS[n][model] for n in names]
+        ax.plot(x, vals, color=color, marker=marker, markersize=9,
+                linewidth=2.2, zorder=4, label=LABEL[model].replace("\n", " "))
+        for xi, v in zip(x, vals):
+            ax.annotate(f"{v:.2f}", (xi, v), textcoords="offset points",
+                        xytext=(0, 11), ha="center", fontsize=9,
+                        fontweight="bold", color=color)
+
+    lstm_vals = [ENVIRONMENTS[n]["LSTM"] for n in names]
+    ax.axhspan(min(lstm_vals), max(lstm_vals), color=BLUE, alpha=0.07, zorder=1)
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, fontsize=10)
+    ax.set_xlim(-0.35, len(names) - 0.65)
+    style(ax, "Same experiment, three machines — RMSE (lower is better)",
+          ylabel="RMSE (cycles)")
+    ax.legend(frameon=False, fontsize=10, loc="center right")
+    ax.text(0, -0.26,
+            "Linear and Random Forest are bit-identical everywhere "
+            "(scikit-learn is deterministic).\nThe LSTM varies 15.93–16.59 from "
+            "floating-point ordering — and beats Random Forest in all three.",
+            transform=ax.transAxes, fontsize=9, color=MUTED)
+    save(fig, "reproduction_environments.png")
+
+
 if __name__ == "__main__":
     fig_model_comparison()
     fig_training_curve()
+    fig_reproduction()

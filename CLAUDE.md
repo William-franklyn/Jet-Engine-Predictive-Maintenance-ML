@@ -97,14 +97,43 @@ The README frames the work as **four rounds of model selection** (1: linear/logi
 2: tuned RF, 3: rolling-window features + gradient boosting — a kept negative result,
 4: LSTM). That narrative is real, not retrofitted; keep it accurate if models change.
 
-torch is in `requirements-lstm.txt`, deliberately **not** `requirements.txt` — the deployed
-dashboard never imports it, and keeping it out is what keeps the Streamlit Cloud deploy inside
-free-tier limits.
+**torch is now IN `requirements.txt`** (this reversed an earlier decision) because the deployed
+dashboard serves LSTM predictions. The first line pins the CPU-only wheel via
+`--extra-index-url https://download.pytorch.org/whl/cpu` — do **not** remove it; default PyPI
+torch pulls ~2GB of CUDA the app never uses and will break the free-tier deploy.
+`requirements-lstm.txt` is now just a back-compat shim that includes `requirements.txt`.
+
+**Two models ship, routed per prediction.** The LSTM can't score a single row — it needs
+`LSTM_SEQ_LEN` (30) cycles of history. So `app.py` calls `predict_rul_sequence()` when history
+exists (Browse mode; Upload CSV *with* `unit`+`cycle` columns) and falls back to
+`predict_rul()` (Random Forest) otherwise (Manual input; CSVs without those columns). The UI
+always names the model that answered — don't "simplify" that away, it's the honest disclosure
+that the headline accuracy doesn't apply to every prediction.
+
+`save_lstm_model.py` trains the **deployed** LSTM on all 100 engines (85 fit + 15 for early
+stopping) and writes `lstm_rul_model.pt` (~220KB, committed — unlike the 28MB RF pickle it's
+cheap to ship and costly to retrain). This is distinct from `compare_models.py`'s checkpoint,
+which trains on 60 engines so 25 stay unseen for honest evaluation. Never quote the deployment
+model's validation RMSE as a headline metric.
 
 Note the README quotes RF at both **18.0** RMSE (save_model.py, all test cycles) and **18.69**
 (compare_models.py, test cycles >= 30 only, where the LSTM can also compete). Same model and
 split, different evaluation subset — both are stated explicitly so the numbers don't look
 inconsistent.
+
+**Reproducibility, verified — read `docs/reproduction-log.md` before touching any metric.**
+The comparison was re-run on Kaggle and Colab. Linear/Logistic/RF come back **bit-identical**
+everywhere (sklearn is deterministic given a seed) — quote those as exact. The **LSTM is not
+bit-reproducible across machines**: RMSE ranged 15.93–16.59 because torch's CPU reductions
+depend on thread count and instruction width, so each environment picks a different best epoch
+(56/62/60). Hence the README reports the LSTM as **16.19 ± 0.35 (n=3 environments)**, not a
+single figure. Two earlier claims were corrected after this: the "~41% safer C-MAPSS" figure
+(actually 28–41% depending on machine) and treating "epoch 56" as a property of the model
+rather than of one laptop. Don't reintroduce either.
+
+`kaggle_reproduce.py` is a single self-contained file (no repo imports) for teammates to verify
+the numbers in Kaggle/Colab; it prints an OK/DIFF check against the published values. Keep its
+inlined constants in sync if the real modules change.
 
 The dashboard still serves Random Forest. `model.py`'s `predict_rul()` loads
 `random_forest_model.pkl` when present; when it isn't, it falls back to a placeholder

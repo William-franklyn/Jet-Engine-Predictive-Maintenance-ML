@@ -13,12 +13,13 @@
 > many flight cycles remain before failure — so airlines can move from *fixed*
 > replacement schedules to **predictive maintenance**.
 
-**🔗 Live app:** **[jet-engineml.streamlit.app](https://jet-engineml.streamlit.app)**
+**🔗 Live app:** **[jet-engineml.streamlit.app](https://jet-engineml.streamlit.app)** &nbsp;·&nbsp;
+**▶️ Reproduce it:** **[Colab notebook](https://colab.research.google.com/drive/1qzrg2iQnuTor42PjmQoMWagofw3uq6xi?usp=sharing)**
 
-**🏆 Best model:** **LSTM** — **RMSE 16.59 / MAE 12.20 / R² 0.842** on unseen engines,
-selected over Linear Regression, Logistic Regression and Random Forest across
-**[four documented rounds of training](#-model-selection-four-rounds-of-training)**
-&nbsp;·&nbsp; **📊 Currently deployed:** Random Forest (RMSE 18.0)
+**🏆 Deployed model:** **LSTM** — **RMSE 16.19 ± 0.35 / MAE 11.59 ± 0.53 / R² 0.850** on
+unseen engines, selected over Linear Regression, Logistic Regression and Random Forest across
+**[five documented rounds of training](#-model-selection-five-rounds-of-training)** and
+**[verified on three independent machines](docs/reproduction-log.md)**.
 
 ---
 
@@ -30,7 +31,7 @@ selected over Linear Regression, Logistic Regression and Random Forest across
 4. [The Dataset](#-the-dataset)
 5. [Exploratory Data Analysis](#-exploratory-data-analysis)
 6. [Modeling Approach](#-modeling-approach)
-7. [Model Selection: Four Rounds of Training](#-model-selection-four-rounds-of-training)
+7. [Model Selection: Five Rounds of Training](#-model-selection-five-rounds-of-training)
 8. [Results](#-results)
 9. [How the Dashboard Works](#-how-the-dashboard-works)
 10. [Getting Started](#-getting-started)
@@ -57,15 +58,34 @@ cycles left before failure — from its sensors, maintenance can be scheduled *p
 engine, by condition*, instead of by a one-size-fits-all calendar. This project builds
 that estimator and wraps it in an interactive dashboard.
 
+### What the sensors are actually measuring
+
+<!-- TO ADD THE ENGINE DIAGRAM: save the image as docs/images/jet-engine-diagram.png,
+     then delete this comment and uncomment the line below.
+<img src="docs/images/jet-engine-diagram.png" width="820" alt="Annotated cutaway of a turbofan engine showing air intake, fan, low pressure compressor, combustion chamber, turbines and exhaust nozzle">
+-->
+
+A turbofan pulls air in through the **fan**, compresses it, burns it with fuel in the
+**combustion chamber**, and drives **turbines** with the hot exhaust. The 15 sensor channels
+in our dataset are temperature, pressure, fan/core speed and flow readings taken at points
+along this path.
+
+That physical picture is why the degradation signal exists at all: as an engine wears, seals
+loosen and blades erode, so the compressor must work harder for the same thrust. Core
+temperatures creep up and pressure ratios drift — slowly at first, then sharply near failure.
+**The models never see a temperature in °C; they see that drift**, z-scored, one cycle at a
+time (Linear/RF) or thirty cycles at a time (LSTM).
+
 ---
 
 ## 🖥️ Dashboard
 
-The Streamlit app has three modes, all backed by the same trained model.
+The Streamlit app has three modes. Each prediction is served by the **LSTM** when the engine's
+history is available, and by the **Random Forest** when it isn't — and the UI says which.
 
 > ### ▶️ **[Try it live → jet-engineml.streamlit.app](https://jet-engineml.streamlit.app)**
-> The deployed dashboard trains its model on startup from the committed dataset — no
-> setup required.
+> The LSTM checkpoint ships with the repo; the Random Forest is trained on startup from the
+> committed dataset. No setup required.
 
 ### 1. Browse engine
 Pick one of the 100 training engines and scrub through its life cycle by cycle, watching
@@ -95,6 +115,12 @@ color-coded maintenance recommendation (🟢 healthy / 🟠 inspect / 🔴 maint
 
 ![Manual input mode](docs/images/dashboard-manual.png)
 
+> ⚠️ **This mode is served by the Random Forest, not the LSTM** — and that is a genuine
+> limitation of sequence models, not an oversight. The LSTM predicts from a *trajectory*: it
+> needs the last 30 cycles to see how fast sensors are drifting. A single hand-entered
+> snapshot has no history, so only a model that reads one cycle at a time can score it. The
+> app states this in the UI rather than silently downgrading the prediction.
+
 ---
 
 ## 🏗️ System Architecture
@@ -102,32 +128,43 @@ color-coded maintenance recommendation (🟢 healthy / 🟠 inspect / 🔴 maint
 ```mermaid
 flowchart TD
     A["📄 nasa_cmapss_FD001_scaled.csv<br/>20,631 rows · 100 engines · 16 features"] --> B["🧮 Preprocessing<br/>cap RUL at 125 cycles<br/>engine-grouped split"]
-    B --> C["🌲 Random Forest Regressor<br/>200 trees · leaf=10 · sqrt features"]
-    C --> D{"💾 random_forest_model.pkl<br/>exists?"}
-    D -- "yes (local)" --> E["⚡ load pickle"]
-    D -- "no (fresh deploy)" --> F["🚀 train on startup<br/>from committed CSV<br/>(cached)"]
-    E --> G["🔮 predict_rul()"]
-    F --> G
-    G --> H1["🔍 Browse engine"]
-    G --> H2["📤 Upload CSV"]
-    G --> H3["✍️ Manual input"]
-    H1 --> I["📈 Streamlit dashboard"]
-    H2 --> I
-    H3 --> I
+    B --> C1["🧠 LSTM<br/>30-cycle window · 2 layers · hidden 64"]
+    B --> C2["🌲 Random Forest<br/>200 trees · leaf=10 · sqrt features"]
+    C1 --> D1["💾 lstm_rul_model.pt<br/>(committed, ~220KB)"]
+    C2 --> D2{"💾 random_forest_model.pkl<br/>exists?"}
+    D2 -- "no (fresh deploy)" --> F["🚀 train on startup<br/>from committed CSV"]
+    D2 -- "yes (local)" --> E["⚡ load pickle"]
+
+    D1 --> R{"🔀 Does this row have<br/>30 cycles of history?"}
+    E --> R
+    F --> R
+    R -- "yes" --> P1["🧠 LSTM prediction"]
+    R -- "no — single snapshot" --> P2["🌲 Random Forest prediction"]
+
+    P1 --> I["📈 Streamlit dashboard<br/>labels which model answered"]
+    P2 --> I
 
     classDef data fill:#cde2fb,stroke:#2a78d6,color:#0b0b0b;
     classDef model fill:#d7f0e5,stroke:#1baf7a,color:#0b0b0b;
     classDef app fill:#fbe0d3,stroke:#eb6834,color:#0b0b0b;
     class A,B data;
-    class C,E,F,G model;
-    class H1,H2,H3,I app;
+    class C1,C2,D1,D2,E,F,P1,P2 model;
+    class R,I app;
 ```
 
-**The key architectural decision** is that the app is **self-sufficient**: the trained
-model pickle is ~28 MB and *not* committed (it exceeds GitHub limits when large, and
-would drift from the code). Instead, on a fresh cloud deployment the app **trains the
-model once on startup** from the committed dataset and caches it. No external files, no
-manual steps — clone and run.
+**The key architectural decision is that the dashboard runs both models, and routes per
+prediction.** The LSTM is more accurate, but it physically cannot score a single row — it
+needs 30 cycles of history to read the degradation *trend*. So:
+
+- **History available** (browsing an engine, or a CSV with `unit`/`cycle` columns) → **LSTM**
+- **A lone snapshot** (manual input, or a CSV without engine/cycle identifiers) → **Random Forest**
+
+The UI always states which model produced a given number, rather than implying one model
+answers everything.
+
+The app also stays **self-sufficient**: the LSTM checkpoint is only ~220 KB so it's committed
+directly, while the ~28 MB Random Forest pickle is gitignored and retrained on startup from
+the committed CSV. No external files, no manual steps — clone and run.
 
 ---
 
@@ -223,7 +260,7 @@ worse average.
 
 ---
 
-## 🔁 Model Selection: Four Rounds of Training
+## 🔁 Model Selection: Five Rounds of Training
 
 We did **not** pick a model up front. We ran **five rounds of training**, each one
 answering a question the previous round raised, and let the measurements decide. Two of
@@ -307,7 +344,7 @@ minimum already reached at epoch 56**.
 > than leaving the more flattering claim in place. Further gains would need a different
 > architecture or window length — not more epochs.
 
-### Making the four rounds comparable
+### Making the rounds comparable
 `compare_models.py` re-trains **all four models in one script** and enforces three
 fairness rules, so the numbers below are a like-for-like fight rather than four separate
 experiments quoted next to each other:
@@ -340,7 +377,13 @@ All results below are on the **25 held-out engines** no model ever saw during tr
 |---|---|---:|---:|---:|---:|
 | 1 | Linear Regression | 20.55 | 15.89 | 0.758 | 33,565 |
 | 2 | Random Forest | 18.69 | 13.82 | 0.800 | 43,450 |
-| **4** | **LSTM** | **16.59** | **12.20** | **0.842** | **25,629** |
+| **4** | **LSTM** | **16.19 ± 0.35** | **11.59 ± 0.53** | **0.850 ± 0.007** | **28,732 ± 2,829** |
+
+> The Linear and Random Forest rows are **exact** — scikit-learn is deterministic given a
+> seed, and those figures came back bit-identical on all three machines we tested. The LSTM
+> row is a **mean ± standard deviation across three environments**, because neural-network
+> training is not bit-reproducible across different CPUs and library versions. See
+> **[the reproduction log](docs/reproduction-log.md)** for all three raw runs.
 
 **"Will this engine fail within 30 cycles?"** — higher is better. This is the board that
 lets the Round-1 classifier compete:
@@ -354,19 +397,22 @@ lets the Round-1 classifier compete:
 
 ### Why we picked the LSTM — four independent reasons
 
-1. **Lowest error, by a clear margin.** RMSE **16.59** vs. 18.69 (RF) and 20.55 (linear).
-   That's **~4 cycles better than the baseline** and **~2.1 better than the Random
-   Forest** — not a rounding-error win.
+1. **Lowest error, by a clear margin.** RMSE **16.19** vs. 18.69 (RF) and 20.55 (linear) —
+   roughly **4 cycles better than the baseline** and **2.5 better than the Random Forest**.
+   Crucially, the margin held on **every** machine we tested: even our *worst* LSTM run
+   (16.59) beat the Random Forest by 2.10 cycles.
 2. **Fewest catastrophic misses.** The gap between a model's RMSE and MAE reveals hidden
-   large errors, because RMSE squares them. LSTM's gap is **4.39**, vs. RF's **4.87** and
-   linear's **4.66** — the *smallest* of the three. On jet engines, one 40-cycle miss
-   matters more than ten 4-cycle ones, so this is arguably the most important row here.
+   large errors, because RMSE squares them. LSTM's gap is **4.6**, vs. RF's **4.87** — the
+   smallest of the three. On jet engines, one 40-cycle miss matters more than ten 4-cycle
+   ones, so this is arguably the most important row here.
 3. **Best safety score.** The asymmetric **C-MAPSS score** punishes *late* predictions —
    claiming an engine will last longer than it does — far harder than early ones, because
-   late is the dangerous direction. LSTM scores **25,629** vs. RF's **43,450**: it is
-   **~41% safer** on the metric that encodes real maintenance risk.
-4. **Best failure alarm.** F1 **0.906** vs. logistic's 0.828 — when it warns that an
-   engine is within 30 cycles of failure, it is right more often *and* misses fewer.
+   late is the dangerous direction. The LSTM beat the Random Forest's **43,450** on all
+   three machines, by between **28% and 41%** depending on the environment — call it
+   roughly a third better on the metric that encodes real maintenance risk.
+4. **Best failure alarm.** F1 **0.905** vs. logistic's 0.828 — when it warns that an
+   engine is within 30 cycles of failure, it is right more often *and* misses fewer. This
+   was our **most stable** metric across environments (0.904–0.906).
 
 ### Why it wins — the mechanism
 This isn't "deep learning is magic." It's the input representation:
@@ -382,6 +428,41 @@ This isn't "deep learning is magic." It's the input representation:
 The curve crosses below the Random Forest around **epoch 39** and flattens. The kept model
 is the **epoch-56 checkpoint** — training restores best-validation weights, so the final
 epoch is not the model.
+
+### Verified on three independent machines
+
+We didn't just report our own run — we re-ran the whole comparison on **Kaggle** and **Google
+Colab** as well, on different operating systems, CPUs and library versions.
+
+<img src="docs/images/reproduction_environments.png" width="720" alt="RMSE by model across local, Kaggle and Colab environments: Linear and Random Forest identical everywhere, LSTM varying between 15.93 and 16.59">
+
+| | Local (Windows) | Kaggle (Linux) | Colab (Linux) |
+|---|---:|---:|---:|
+| Linear | 20.55 | 20.55 | 20.55 |
+| Random Forest | 18.69 | 18.69 | 18.69 |
+| LSTM | 16.59 | 15.93 | 16.04 |
+
+Two things came out of this, and we report both:
+
+**The scikit-learn models are bit-identical everywhere** — `20.55` and `18.69` to the decimal,
+on every machine. That confirms the dataset, the engine-grouped split and the evaluation
+pipeline are genuinely identical across environments.
+
+**The LSTM is not bit-reproducible across machines**, and we don't pretend otherwise. torch's
+CPU kernels sum in an order that depends on thread count and instruction width, so tiny
+differences appear by epoch 10 and compound; each run settles on a different best checkpoint
+(epoch 56 / 62 / 60). This is a known property of neural network training, not a defect —
+seeding makes a run repeatable *on one machine*, but cannot make floating-point arithmetic
+identical *across* machines. It's why the LSTM row is quoted as a mean ± standard deviation.
+
+**The conclusion survived all three runs.** The ordering LSTM < Random Forest < Linear never
+came close to flipping.
+
+> **▶️ Run it yourself:** open the **[Colab notebook](https://colab.research.google.com/drive/1qzrg2iQnuTor42PjmQoMWagofw3uq6xi?usp=sharing)**
+> and hit *Runtime → Run all* (~12 min, CPU, no setup). Or run
+> [`kaggle_reproduce.py`](kaggle_reproduce.py) anywhere. Both end with a **reproduction check**
+> that prints `OK`/`DIFF` per model against the values published here — so verifying this
+> README takes no manual comparison. Full logs: **[docs/reproduction-log.md](docs/reproduction-log.md)**.
 
 ### The Random Forest in detail
 The three figures below profile the Round-2 Random Forest, which remains the model the
@@ -473,19 +554,34 @@ python scripts/generate_figures.py     # writes docs/images/*.png
 python logistic_regression_base.py
 ```
 
-### Reproduce the four-round model selection
+### Reproduce the model selection
 Trains Linear, Logistic, Random Forest **and** the LSTM on one shared split and prints
 both scoreboards (~10 min on CPU):
 
 ```bash
-pip install -r requirements-lstm.txt     # torch — kept separate, see below
-python compare_models.py                 # writes docs/model_comparison_*.csv
+python compare_models.py                      # writes docs/model_comparison_*.csv
 python scripts/generate_model_comparison.py   # rebuilds the comparison figures
 ```
 
-> **Why torch is in a separate requirements file:** it's a ~200 MB install and the
-> deployed dashboard never imports it. Keeping it out of `requirements.txt` is what keeps
-> the Streamlit Cloud deployment inside free-tier limits.
+To retrain the **deployed** LSTM (uses all 100 engines, unlike the evaluation model):
+
+```bash
+python save_lstm_model.py     # writes lstm_rul_model.pt
+```
+
+> **Windows note:** if training segfaults partway through — at a different epoch each run —
+> that's a torch/OpenMP threading fault, not a bug. `set OMP_NUM_THREADS=2` fixes it with
+> identical results. Linux is unaffected.
+
+### Verify our published numbers
+Easiest is the **[Colab notebook](https://colab.research.google.com/drive/1qzrg2iQnuTor42PjmQoMWagofw3uq6xi?usp=sharing)**
+(*Runtime → Run all*, ~12 min, no setup). Or locally:
+
+```bash
+python kaggle_reproduce.py
+```
+
+Either prints a **reproduction check** comparing what you got against what this README claims.
 
 ---
 
@@ -495,20 +591,24 @@ python scripts/generate_model_comparison.py   # rebuilds the comparison figures
 Jet-Engine-Predictive-Maintenance-ML/
 ├── app.py                          # Streamlit dashboard (3 modes)
 ├── model.py                        # predict_rul(), feature list, model loader
+├── model.py                        # predict_rul(), predict_rul_sequence(), loaders
 ├── save_model.py                   # Round 2 — trains + saves the RF; train_full_model()
 ├── logistic_regression_base.py     # Round 1 — logistic vs linear on the same split
 ├── lstm_model.py                   # Round 4 — PyTorch LSTM + sequence windowing
-├── compare_models.py               # the four-round head-to-head benchmark
+├── save_lstm_model.py              # trains the DEPLOYED LSTM on all 100 engines
+├── lstm_rul_model.pt               # the deployed LSTM checkpoint (~220KB, committed)
+├── compare_models.py               # the head-to-head benchmark (all 4 models)
+├── kaggle_reproduce.py             # self-contained one-file reproduction script
 ├── scripts/
 │   ├── generate_figures.py         # regenerates the EDA / Random Forest figures
 │   └── generate_model_comparison.py# regenerates the model-selection figures
 ├── docs/
+│   ├── reproduction-log.md         # all three environments, raw output
 │   ├── images/                     # generated charts + dashboard screenshots
 │   ├── model_comparison_*.csv      # measured results (written by compare_models.py)
 │   └── lstm_training_curve.csv     # LSTM learning curve, logged per epoch
 ├── nasa_cmapss_FD001_scaled.csv    # the dataset (single source of truth)
-├── requirements.txt                # app + sklearn deps (no torch — see Getting Started)
-├── requirements-lstm.txt           # torch, for the LSTM experiment only
+├── requirements.txt                # all deps, incl. CPU-only torch
 ├── README.md
 └── CLAUDE.md                       # engineering notes / conventions
 ```
@@ -525,8 +625,10 @@ Jet-Engine-Predictive-Maintenance-ML/
 | **Lean Random Forest** | `leaf=10 / 200 trees` matches a heavier model's accuracy at ¼ the size, so the app can train on startup within free-tier memory. |
 | **Train-on-startup, not a committed binary** | Keeps the model in sync with code/data and avoids shipping a large pickle to git. |
 | **Graceful degradation** | Any environment/training failure falls back to a placeholder instead of crashing the deployed app. |
-| **Model chosen by measurement, not preference** | Four rounds of training on one shared split and one shared scoreboard — including a negative result we kept — so "we use an LSTM" is a **conclusion**, not a starting assumption. |
-| **torch isolated in `requirements-lstm.txt`** | The LSTM is the best model but a ~200 MB dependency; keeping it out of the app's requirements preserves the free-tier deployment. |
+| **Model chosen by measurement, not preference** | Five rounds of training on one shared split and one shared scoreboard — including **two negative results we kept** — so "we use an LSTM" is a **conclusion**, not a starting assumption. |
+| **Two models in production, routed per prediction** | The LSTM is more accurate but needs 30 cycles of history. Rather than cripple the app or hide the gap, it serves LSTM predictions where history exists and Random Forest where it doesn't — and **labels which**. |
+| **CPU-only torch wheel** | Default PyPI `torch` drags in ~2 GB of CUDA libraries the app never uses. Pinning `--extra-index-url .../whl/cpu` keeps the deploy inside free-tier limits. |
+| **Verified on three machines** | Publishing numbers only one laptop can produce isn't reproducible. Re-running on Kaggle and Colab exposed that the LSTM varies ±0.35 RMSE across environments — so we report it that way. |
 
 ---
 
@@ -541,12 +643,16 @@ Jet-Engine-Predictive-Maintenance-ML/
   learning-rate decay buy nothing. Further improvement needs a **different architecture or
   window length** — a hyperparameter sweep over window size, hidden units and layer count
   is the honest next step, and we have not run one.
-- **The dashboard still serves the Random Forest.** Round 4 changed which model is *best*,
-  not yet which model is *deployed*; wiring the LSTM into `predict_rul()` is the next
-  engineering step, and it means shipping torch to the deploy environment.
 - **Sequence models can't cold-start.** The LSTM needs 30 cycles of history before it can
-  predict at all, so for a brand-new engine the Random Forest remains the only option.
-  A production system would likely run **both**.
+  predict properly, so a brand-new engine — or a single hand-entered reading — still falls
+  back to the Random Forest. The dashboard runs **both** for this reason, but it does mean
+  the headline accuracy doesn't apply to every prediction the app makes.
+- **Not bit-reproducible across machines.** LSTM RMSE varied 15.93–16.59 over three
+  environments. The conclusion is stable; the exact decimal is not. See
+  [the reproduction log](docs/reproduction-log.md).
+- **One seed.** All results use `random_state=42`, chosen before any modelling and never
+  changed. A fuller evaluation would report mean ± std over 3–5 **seeds** (not just three
+  machines) to separate a real margin from split luck. We have not run that.
 - **Scaling assumptions.** The app expects inputs pre-scaled with the same statistics as
   training; a productionized version would bundle the scaler.
 
