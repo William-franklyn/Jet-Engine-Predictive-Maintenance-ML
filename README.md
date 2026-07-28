@@ -225,10 +225,11 @@ worse average.
 
 ## 🔁 Model Selection: Four Rounds of Training
 
-We did **not** pick a model up front. We ran **four rounds of training**, each one
-answering a question the previous round raised, and let the measurements decide. Every
-model below is still in the repo and still reproducible — this section is the audit
-trail.
+We did **not** pick a model up front. We ran **five rounds of training**, each one
+answering a question the previous round raised, and let the measurements decide. Two of
+those rounds were **negative results we kept** — they're the reason the final choice is
+defensible. Every model below is still in the repo and still reproducible; this section is
+the audit trail.
 
 ```mermaid
 flowchart LR
@@ -236,11 +237,12 @@ flowchart LR
     R2["<b>Round 2</b><br/>RF, tuned<br/><i>Do nonlinearities help?</i>"]
     R3["<b>Round 3</b><br/>Rolling features<br/>+ Gradient Boosting<br/><i>Can we push trees further?</i>"]
     R4["<b>Round 4</b><br/>LSTM<br/><i>Does sequence memory win?</i>"]
-    R1 --> R2 --> R3 --> R4 --> W["✅ <b>LSTM selected</b><br/>RMSE 16.59"]
+    R5["<b>Round 5</b><br/>300 epochs + LR decay<br/><i>Is the LSTM under-trained?</i>"]
+    R1 --> R2 --> R3 --> R4 --> R5 --> W["✅ <b>LSTM selected</b><br/>RMSE 16.59<br/>converged"]
 
     classDef done fill:#e1e0d9,stroke:#898781,color:#0b0b0b;
     classDef win fill:#d7f0e5,stroke:#1baf7a,color:#0b0b0b;
-    class R1,R2,R3 done;
+    class R1,R2,R3,R5 done;
     class R4,W win;
 ```
 
@@ -286,6 +288,24 @@ was the **input representation**: every model so far saw one cycle at a time.
 
 **Yes, decisively.** A 2-layer LSTM reading a **30-cycle sliding window** per engine beat
 every previous round on every metric. See [Results](#-results).
+
+### Round 5 — Extended training & LR decay *(convergence check)*
+**Question:** was Round 4 under-trained — is there more left in the LSTM?
+
+**No.** Round 4 stopped at a 60-epoch cap with the curve looking like it was still
+descending, so we re-ran with a **300-epoch budget and `ReduceLROnPlateau`** learning-rate
+decay. It early-stopped at epoch 81 having found nothing better: the best checkpoint was
+**epoch 56**, already inside the original run.
+
+Test metrics came out **identical to Round 4** — which is the expected result, since
+training restores best-validation weights rather than final-epoch weights, and both runs
+share a seed. What looked like a still-falling curve at epoch 60 was **noise around a
+minimum already reached at epoch 56**.
+
+> **We report 16.59 as a converged result, not a floor.** An earlier draft of this README
+> claimed the LSTM was under-trained; Round 5 disproved that, and we corrected it rather
+> than leaving the more flattering claim in place. Further gains would need a different
+> architecture or window length — not more epochs.
 
 ### Making the four rounds comparable
 `compare_models.py` re-trains **all four models in one script** and enforces three
@@ -357,10 +377,11 @@ This isn't "deep learning is magic." It's the input representation:
 > **trajectory, not a snapshot** — and Round 3 proved that no amount of tree tuning fixes
 > a snapshot-shaped input.
 
-<img src="docs/images/lstm_training_curve.png" width="720" alt="LSTM validation RMSE per epoch, crossing below the Random Forest and Linear baselines">
+<img src="docs/images/lstm_training_curve.png" width="720" alt="LSTM validation RMSE per epoch, converging below the Random Forest and Linear baselines, best checkpoint at epoch 56">
 
-The learning curve also shows the LSTM **was still improving when it hit the 60-epoch
-cap** — early stopping never triggered. We report **16.59 as a floor, not a ceiling.**
+The curve crosses below the Random Forest around **epoch 39** and flattens. The kept model
+is the **epoch-56 checkpoint** — training restores best-validation weights, so the final
+epoch is not the model.
 
 ### The Random Forest in detail
 The three figures below profile the Round-2 Random Forest, which remains the model the
@@ -516,9 +537,10 @@ Jet-Engine-Predictive-Maintenance-ML/
   metric, not directly comparable to leaderboard RMSE.
 - **Single operating condition.** FD001 is the simplest C-MAPSS subset (one condition,
   one fault mode). FD002–FD004 add operating regimes and fault modes.
-- **The LSTM is under-trained.** It hit the 60-epoch cap with validation RMSE still
-  falling, so **16.59 is a floor, not its ceiling.** A longer schedule and a hyperparameter
-  sweep (window length, hidden size, learning rate) are the obvious next gains.
+- **The LSTM is converged, so easy gains are gone.** Round 5 showed more epochs and
+  learning-rate decay buy nothing. Further improvement needs a **different architecture or
+  window length** — a hyperparameter sweep over window size, hidden units and layer count
+  is the honest next step, and we have not run one.
 - **The dashboard still serves the Random Forest.** Round 4 changed which model is *best*,
   not yet which model is *deployed*; wiring the LSTM into `predict_rul()` is the next
   engineering step, and it means shipping torch to the deploy environment.

@@ -28,10 +28,18 @@ HIDDEN_SIZE = 64
 NUM_LAYERS = 2
 DROPOUT = 0.2
 
-EPOCHS = 60
+# Round 5 schedule. The first run capped at 60 epochs and stopped with
+# validation RMSE still falling — early stopping never fired, so 16.59 was a
+# floor rather than the model's ceiling. This schedule runs long enough for the
+# curve to actually flatten, and decays the learning rate on plateau so the
+# tail of training can refine instead of bouncing around the minimum.
+EPOCHS = 300
 BATCH_SIZE = 256
 LEARNING_RATE = 1e-3
-PATIENCE = 8        # early-stopping patience, in epochs
+PATIENCE = 25       # early-stopping patience, in epochs
+LR_FACTOR = 0.5     # multiply LR by this when validation RMSE plateaus
+LR_PATIENCE = 8     # epochs of no improvement before decaying
+MIN_LR = 1e-5       # stop decaying here
 SEED = 42
 
 ID_COL = "unit_number"
@@ -122,6 +130,9 @@ def train_lstm(X_tr, y_tr, X_val, y_val, epochs=EPOCHS, batch_size=BATCH_SIZE,
 
     model = LSTMRegressor(n_features=X_tr.shape[2])
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, factor=LR_FACTOR, patience=LR_PATIENCE, min_lr=MIN_LR,
+    )
     loss_fn = nn.MSELoss()
 
     loader = DataLoader(
@@ -153,15 +164,19 @@ def train_lstm(X_tr, y_tr, X_val, y_val, epochs=EPOCHS, batch_size=BATCH_SIZE,
             val_pred = torch.clamp(model(Xv), 0, RUL_CAP)
             val_rmse = torch.sqrt(loss_fn(val_pred, yv)).item()
 
+        scheduler.step(val_rmse)
+        current_lr = optimizer.param_groups[0]["lr"]
+
         history.append({
             "epoch": epoch,
             "train_mse": total / len(y_tr),
             "val_rmse": val_rmse,
+            "lr": current_lr,
         })
 
-        if verbose and (epoch % 5 == 0 or epoch == 1):
+        if verbose and (epoch % 10 == 0 or epoch == 1):
             print(f"  epoch {epoch:3d}  train MSE {total / len(y_tr):7.2f}"
-                  f"   val RMSE {val_rmse:6.2f}")
+                  f"   val RMSE {val_rmse:6.2f}   lr {current_lr:.1e}")
 
         if val_rmse < best_rmse - 1e-4:
             best_rmse = val_rmse

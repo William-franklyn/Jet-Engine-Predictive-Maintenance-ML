@@ -150,15 +150,20 @@ def fig_training_curve():
                     f"{LABEL[name].replace(chr(10), ' ')} ({reg.loc[name, 'RMSE']:.2f})",
                     ha="left", fontsize=9, color=color, fontweight="bold")
 
-    final = hist["val_rmse"].iloc[-1]
-    ax.scatter([hist["epoch"].iloc[-1]], [final], color=BLUE, s=45, zorder=5)
-    ax.annotate(f"still falling at the epoch cap\n({final:.2f} and dropping)",
-                xy=(hist["epoch"].iloc[-1], final),
-                xytext=(-12, 42), textcoords="offset points",
-                ha="right", fontsize=9, color=INK2,
+    # Mark the checkpoint that was actually kept: training restores the best
+    # validation weights, so this epoch — not the last one — is the model.
+    i = hist["val_rmse"].idxmin()
+    best_ep, best_val = hist.loc[i, "epoch"], hist.loc[i, "val_rmse"]
+    ax.scatter([best_ep], [best_val], color=GOOD, s=55, zorder=6)
+    ax.annotate(f"best checkpoint — epoch {int(best_ep)} ({best_val:.2f})\n"
+                f"{int(hist['epoch'].max() - best_ep)} further epochs "
+                f"with LR decay found nothing better",
+                xy=(best_ep, best_val),
+                xytext=(18, 46), textcoords="offset points",
+                ha="left", fontsize=9, color=INK2,
                 arrowprops=dict(arrowstyle="->", color=MUTED, linewidth=1.1))
 
-    style(ax, "LSTM learning curve — it overtakes both earlier models",
+    style(ax, "LSTM learning curve — converged below both earlier models",
           xlabel="training epoch", ylabel="validation RMSE (cycles)")
     ax.legend(frameon=False, fontsize=10, loc="upper right")
     save(fig, "lstm_training_curve.png")

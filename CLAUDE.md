@@ -77,9 +77,15 @@ It enforces the fairness rules that make the numbers quotable: one engine-groupe
 since the LSTM can't score cycles 1-29 and shouldn't get to skip the hard early ones), and one
 shared classification scoreboard so the classifier can be compared against the regressors.
 Held-out results: LSTM RMSE 16.59 / MAE 12.20 / R² 0.842, beating RF (18.69) and Linear
-(20.55); LSTM F1 0.906 vs Logistic 0.828. **Caveat: the LSTM hit the 60-epoch cap with
-validation RMSE still falling, so those are a floor, not its ceiling.** Full run takes ~10 min
-on CPU.
+(20.55); LSTM F1 0.906 vs Logistic 0.828. Full run takes ~12 min on CPU.
+
+**The LSTM is converged — do not describe it as under-trained.** An early draft did, because
+the 60-epoch run ended at val RMSE 16.09 and looked like it was still descending. A 300-epoch
+rerun with `ReduceLROnPlateau` (documented as Round 5) early-stopped at epoch 81 and produced
+*identical* test metrics: the best checkpoint is **epoch 56**, already inside the original run,
+and `train_lstm()` restores best-validation weights rather than final-epoch weights. The
+apparent downward slope at epoch 60 was noise around a minimum already reached. Further gains
+need a different architecture/window length, not more epochs.
 
 `compare_models.py` writes its measured results to `docs/model_comparison_regression.csv`,
 `docs/model_comparison_classification.csv` and `docs/lstm_training_curve.csv`.
