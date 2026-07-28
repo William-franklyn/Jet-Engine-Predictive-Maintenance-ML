@@ -131,6 +131,24 @@ single figure. Two earlier claims were corrected after this: the "~41% safer C-M
 (actually 28–41% depending on machine) and treating "epoch 56" as a property of the model
 rather than of one laptop. Don't reintroduce either.
 
+**Data audit — `scripts/audit_data.py`.** Run it before trusting any model result; it exits
+non-zero on integrity failure. Current verdict: the dataset is genuinely clean (0 missing, 0
+duplicates, no dead columns, no cycle gaps, and `RUL == max_cycle - cycle` for all 100 engines).
+Two things it surfaced that must not be "tidied away":
+
+- **The scaler was fit on all 100 engines**, not just the 75 training ones — the global mean is
+  exactly 0 while the train-subset mean is -0.00023. That's mild preprocessing leakage. It
+  leaks no labels and hits all four models equally, so the comparison is unaffected. Fixing it
+  needs raw FD001 (we only hold the scaled CSV) and would invalidate every published number, so
+  it is **disclosed, not fixed**. Don't silently "correct" it.
+- **Class balance is 15.0% of all rows** but **17.9%** in the Results section. Both are right:
+  compare_models.py scores only test cycles >= 30, and dropping early-life rows removes
+  negatives only (positives are fixed at 31 rows/engine). The audit prints this reconciliation
+  so it never reads as a contradiction.
+
+Outliers (0.148% beyond 6 sd) are deliberately **kept** — they are near-failure engines, i.e.
+the signal itself.
+
 `kaggle_reproduce.py` is a single self-contained file (no repo imports) for teammates to verify
 the numbers in Kaggle/Colab; it prints an OK/DIFF check against the published values. Keep its
 inlined constants in sync if the real modules change.

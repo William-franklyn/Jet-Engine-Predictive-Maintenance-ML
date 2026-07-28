@@ -29,17 +29,18 @@ unseen engines, selected over Linear Regression, Logistic Regression and Random 
 2. [Dashboard](#-dashboard)
 3. [System Architecture](#-system-architecture)
 4. [The Dataset](#-the-dataset)
-5. [Exploratory Data Analysis](#-exploratory-data-analysis)
-6. [Modeling Approach](#-modeling-approach)
-7. [Model Selection: Five Rounds of Training](#-model-selection-five-rounds-of-training)
-8. [Results](#-results)
-9. [How the Dashboard Works](#-how-the-dashboard-works)
-10. [Getting Started](#-getting-started)
-11. [Project Structure](#-project-structure)
-12. [Design Decisions](#-design-decisions)
-13. [Limitations & Future Work](#-limitations--future-work)
-14. [The Team](#-the-team)
-15. [Acknowledgments & References](#-acknowledgments--references)
+5. [Data Audit](#-data-audit)
+6. [Exploratory Data Analysis](#-exploratory-data-analysis)
+7. [Modeling Approach](#-modeling-approach)
+8. [Model Selection: Five Rounds of Training](#-model-selection-five-rounds-of-training)
+9. [Results](#-results)
+10. [How the Dashboard Works](#-how-the-dashboard-works)
+11. [Getting Started](#-getting-started)
+12. [Project Structure](#-project-structure)
+13. [Design Decisions](#-design-decisions)
+14. [Limitations & Future Work](#-limitations--future-work)
+15. [The Team](#-the-team)
+16. [Acknowledgments & References](#-acknowledgments--references)
 
 ---
 
@@ -197,6 +198,115 @@ failure, logging sensor readings every flight cycle.
 > above the fleet mean," *not* a temperature or pressure. All UI copy says "scaled
 > sensor reading" rather than °F/psi. Uninformative/constant FD001 channels (sensors
 > 1, 5, 10, 16, 18, 19) were dropped upstream.
+
+---
+
+## 🧪 Data Audit
+
+Before trusting a single model result, we audited the dataset. Everything below is produced by
+[`scripts/audit_data.py`](scripts/audit_data.py) — run it yourself:
+
+```bash
+python scripts/audit_data.py
+```
+
+It exits non-zero on any integrity failure, so it can gate a pipeline rather than just inform
+a human.
+
+### 1. Integrity — clean on every check
+
+| Check | Result |
+|---|---|
+| Missing values | ✅ **0** across 20,631 rows × 19 columns |
+| Duplicate rows | ✅ **0** |
+| Non-numeric / malformed columns | ✅ none |
+| Constant or dead feature columns | ✅ none |
+| Cycle continuity | ✅ every engine runs `1, 2, 3 … N` with **no gaps** |
+| Label consistency | ✅ `RUL == max_cycle − current_cycle` for **all 100 engines** |
+| Run-to-failure | ✅ every engine reaches RUL = 0 |
+
+Zero label errors across 20,631 rows is unusual and worth stating plainly — it reflects that
+FD001 is a curated NASA benchmark, not scraped data.
+
+The uninformative FD001 channels (sensors **1, 5, 10, 16, 18, 19** — constant or pure noise)
+were already dropped upstream, which is why 16 features remain rather than 24.
+
+### 2. Outliers — kept deliberately
+
+**0.148%** of readings sit beyond 6 standard deviations (max |z| = 8.12). We did **not** remove
+them. Those extreme values are engines close to failure — they *are* the signal the project
+exists to detect. Clipping them would have deleted the target phenomenon.
+
+### 3. Split representativeness
+
+<img src="docs/images/data_audit.png" width="820" alt="Left: engine lifetime histogram for train vs test engines, closely overlapping. Right: RUL distribution with the 125-cycle cap marked.">
+
+| | Engines | Mean lifetime | Median |
+|---|---:|---:|---:|
+| Train | 75 | 208 cycles | 199 |
+| Test | 25 | 202 cycles | 195 |
+
+The test engines' lifetimes differ from the training set's by **2.5%** — the hold-out isn't
+accidentally made of unusually short- or long-lived engines. The shortest engine in the whole
+dataset is **128 cycles**, comfortably above the LSTM's 30-cycle window, so no prediction ever
+relies on padding.
+
+### 4. Class balance
+
+**15.0%** of all rows are within 30 cycles of failure. This imbalance is why we report
+**F1 and PR-AUC** rather than leaning on accuracy — a model that never raises an alarm would
+still score 85% accuracy while being worthless.
+
+> **Why the Results section says 17.9%:** that figure is measured on the *scored* subset (test
+> engines, cycles ≥ 30). Filtering out early-life cycles removes negatives only — the positive
+> count is fixed at exactly 31 rows per engine — so the *rate* rises while the *count* doesn't.
+> Both numbers are correct for their population.
+
+### 5. ⚠️ One disclosed issue: the scaler saw the test engines
+
+The dataset arrived **pre-scaled**, and the audit shows the z-scoring statistics were computed
+over **all 100 engines** rather than the 75 training engines alone:
+
+```
+global mean (all 100 engines): +0.00000000   ← exactly zero
+train-subset mean            : -0.00023      ← would be exactly zero if fit on train only
+```
+
+This is **preprocessing data leakage**. Strictly, a scaler is part of the model and should only
+ever see training data.
+
+**How much it matters — honestly, very little here:**
+
+- It leaks **aggregate sensor statistics** (a mean and a standard deviation), **not labels**. No
+  RUL information crosses the split.
+- The magnitude is negligible: a train-subset mean of −0.00023 instead of 0.
+- It affects **all four models identically**, so the model *comparison* — the actual finding of
+  this project — is unaffected.
+
+It could make the absolute error figures a hair optimistic. It cannot change the ordering
+LSTM < Random Forest < Linear.
+
+We are not silently fixing this: correcting it properly requires the raw NASA FD001 files (we
+hold only the scaled CSV), refitting a `StandardScaler` inside the training fold, and re-running
+all five rounds. We judged that a poor trade for a sub-0.001 shift, and disclosed it instead.
+
+### 6. Bias & representativeness
+
+These are limits of **FD001 itself**. No amount of cleaning removes them, and they bound what
+this model may responsibly be used for:
+
+| Bias | What it means for the model |
+|---|---|
+| **Simulated, not real** | C-MAPSS is a NASA *simulation*. Real telemetry carries sensor drift, maintenance events and varied duty cycles absent here. Accuracy on FD001 is an upper bound on real-world accuracy. |
+| **One operating condition** | FD001 is the simplest subset (sea level, single regime). FD002/FD004 add conditions the model has never seen. |
+| **One fault mode** | HPC degradation only. The model has **no exposure to fan or bearing failures** and would be blind to them — it would not "see them coming", it would report a healthy engine. |
+| **No censored engines** | All 100 engines run to failure. Real fleets retire healthy engines on schedule; those observations don't exist here, so the model has never seen an engine that was fine-but-withdrawn. |
+| **Imbalanced alarm class** | Only 15% of rows are near failure — accuracy is a misleading headline. |
+| **Asymmetric cost** | A late prediction risks an in-flight failure; an early one wastes money. Standard metrics treat these as equal, which is why we also report the **C-MAPSS score**. |
+
+**The honest bottom line:** this model predicts *one fault mode*, on *one operating condition*,
+in *simulated* data. It is a sound demonstration that sequence models beat snapshot models at
+RUL prediction. It is **not** an airworthy maintenance system, and we don't claim it is.
 
 ---
 
@@ -600,6 +710,7 @@ Jet-Engine-Predictive-Maintenance-ML/
 ├── compare_models.py               # the head-to-head benchmark (all 4 models)
 ├── kaggle_reproduce.py             # self-contained one-file reproduction script
 ├── scripts/
+│   ├── audit_data.py               # data integrity / bias audit (exits 1 on failure)
 │   ├── generate_figures.py         # regenerates the EDA / Random Forest figures
 │   └── generate_model_comparison.py# regenerates the model-selection figures
 ├── docs/
@@ -653,6 +764,14 @@ Jet-Engine-Predictive-Maintenance-ML/
 - **One seed.** All results use `random_state=42`, chosen before any modelling and never
   changed. A fuller evaluation would report mean ± std over 3–5 **seeds** (not just three
   machines) to separate a real margin from split luck. We have not run that.
+- **The scaler saw the test engines.** The dataset arrived pre-scaled using statistics from all
+  100 engines — mild preprocessing leakage. It leaks no labels and affects all four models
+  equally, so the comparison stands, but absolute errors may be marginally optimistic. Full
+  detail in the [Data Audit](#-data-audit).
+- **One fault mode, one operating condition, simulated data.** FD001 covers HPC degradation at
+  a single operating regime, generated by a NASA simulator. The model would be **blind** to a
+  fan or bearing failure — not merely inaccurate, but reporting a healthy engine. This is a
+  demonstration that sequence models beat snapshot models, **not an airworthy system**.
 - **Scaling assumptions.** The app expects inputs pre-scaled with the same statistics as
   training; a productionized version would bundle the scaler.
 
