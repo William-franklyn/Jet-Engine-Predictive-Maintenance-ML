@@ -61,10 +61,11 @@ that estimator and wraps it in an interactive dashboard.
 
 ### What the sensors are actually measuring
 
-<!-- TO ADD THE ENGINE DIAGRAM: save the image as docs/images/jet-engine-diagram.png,
-     then delete this comment and uncomment the line below.
-<img src="docs/images/jet-engine-diagram.png" width="820" alt="Annotated cutaway of a turbofan engine showing air intake, fan, low pressure compressor, combustion chamber, turbines and exhaust nozzle">
--->
+<img src="docs/images/jet-engine-diagram.png" width="820" alt="Annotated cutaway of a turbofan engine showing air intake, bypass air, fan, low pressure compressor, combustion chamber, fuel injectors, turbines and exhaust nozzle">
+
+<sub>*Schematic illustration, simplified and not to scale — a real turbofan also has a high
+pressure compressor and a low pressure turbine, and its sensor placement differs. Included to
+show the airflow path the sensors sample, not as an engineering reference.*</sub>
 
 A turbofan pulls air in through the **fan**, compresses it, burns it with fuel in the
 **combustion chamber**, and drives **turbines** with the hot exhaust. The 15 sensor channels
