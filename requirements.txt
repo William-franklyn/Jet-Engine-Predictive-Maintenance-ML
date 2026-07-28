@@ -1,5 +1,11 @@
+# CPU-only torch wheel. The default PyPI torch pulls ~2GB of CUDA libraries the
+# dashboard never uses and which blow past Streamlit Cloud's free-tier limits;
+# this index serves a ~200MB CPU build instead. Keep this line first.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 streamlit
 pandas
 numpy
 scikit-learn
 joblib
+torch

@@ -5,3 +5,9 @@ venv/
 env/
 .streamlit/secrets.toml
 .ipynb_checkpoints/
+
+# Trained model artifact — regenerate with `python save_model.py`
+*.pkl
+
+# lstm_model.pt (~217KB) IS committed on purpose: unlike the 28MB RF pickle it is
+# small, and regenerating it costs a ~10 min CPU training run.

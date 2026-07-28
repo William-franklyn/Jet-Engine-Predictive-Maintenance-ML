@@ -1,0 +1,8 @@
+# Kept for backwards compatibility — torch now lives in requirements.txt,
+# because the dashboard serves LSTM predictions and needs it at runtime.
+#
+# Installing requirements.txt is sufficient:
+#   pip install -r requirements.txt
+#   python compare_models.py
+
+-r requirements.txt
