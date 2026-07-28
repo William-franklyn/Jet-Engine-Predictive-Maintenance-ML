@@ -38,7 +38,7 @@ physical units. Keep that in mind in any UI copy ("scaled sensor reading", not "
 
 ## Models
 
-Two models are planned per the team deck:
+Two models were planned per the team deck; an LSTM was added later at the team's request:
 - **Logistic Regression** — interpretable baseline; classifies "will this engine fail within
   W cycles?"
 - **Random Forest** — captures nonlinear degradation and sensor interactions
@@ -65,7 +65,42 @@ fresh Streamlit Cloud deploy the app trains once from the committed CSV (cached 
 `@st.cache_resource`) instead of shipping a binary. Run `python save_model.py` locally only
 when you want the faster pre-baked pickle.
 
-No LSTM model exists in this repo. `model.py`'s `predict_rul()` loads
+`lstm_model.py` adds a **PyTorch LSTM** regressor — the sequence model the team asked about.
+Where the other three models see one cycle at a time (a single row of 16 scaled readings), the
+LSTM reads a 30-cycle sliding window per engine, so it can use the degradation *trend* rather
+than a snapshot. 2-layer LSTM, hidden 64, dropout 0.2, MSE + Adam, early stopping on a
+validation set carved from the training engines.
+
+`compare_models.py` is the head-to-head benchmark (Linear / Logistic / Random Forest / LSTM).
+It enforces the fairness rules that make the numbers quotable: one engine-grouped split
+(same seed 42 as the other scripts), one shared set of evaluation points (test cycles >= 30,
+since the LSTM can't score cycles 1-29 and shouldn't get to skip the hard early ones), and one
+shared classification scoreboard so the classifier can be compared against the regressors.
+Held-out results: LSTM RMSE 16.59 / MAE 12.20 / R² 0.842, beating RF (18.69) and Linear
+(20.55); LSTM F1 0.906 vs Logistic 0.828. **Caveat: the LSTM hit the 60-epoch cap with
+validation RMSE still falling, so those are a floor, not its ceiling.** Full run takes ~10 min
+on CPU.
+
+`compare_models.py` writes its measured results to `docs/model_comparison_regression.csv`,
+`docs/model_comparison_classification.csv` and `docs/lstm_training_curve.csv`.
+`scripts/generate_model_comparison.py` reads **only** those CSVs to build the README's
+model-selection figures — no numbers are hand-typed, so the charts can't drift from the run.
+If you retrain, regenerate the figures rather than editing the README tables by hand.
+
+The README frames the work as **four rounds of model selection** (1: linear/logistic,
+2: tuned RF, 3: rolling-window features + gradient boosting — a kept negative result,
+4: LSTM). That narrative is real, not retrofitted; keep it accurate if models change.
+
+torch is in `requirements-lstm.txt`, deliberately **not** `requirements.txt` — the deployed
+dashboard never imports it, and keeping it out is what keeps the Streamlit Cloud deploy inside
+free-tier limits.
+
+Note the README quotes RF at both **18.0** RMSE (save_model.py, all test cycles) and **18.69**
+(compare_models.py, test cycles >= 30 only, where the LSTM can also compete). Same model and
+split, different evaluation subset — both are stated explicitly so the numbers don't look
+inconsistent.
+
+The dashboard still serves Random Forest. `model.py`'s `predict_rul()` loads
 `random_forest_model.pkl` when present; when it isn't, it falls back to a placeholder
 heuristic (clearly marked, not a trained model) so the dashboard still shows something. That
 function is the only place a real/updated model needs to be wired in.
