@@ -154,19 +154,39 @@ flowchart TD
     class R,I app;
 ```
 
-**The key architectural decision is that the dashboard runs both models, and routes per
-prediction.** The LSTM is more accurate, but it physically cannot score a single row — it
-needs 30 cycles of history to read the degradation *trend*. So:
+### Why the deployment ships *both* LSTM and Random Forest
 
-- **History available** (browsing an engine, or a CSV with `unit`/`cycle` columns) → **LSTM**
-- **A lone snapshot** (manual input, or a CSV without engine/cycle identifiers) → **Random Forest**
+This is a deliberate design choice, not indecision — the LSTM is our best model, but it can't
+answer every kind of question a user asks. We ship both and **route each prediction to the
+model that can actually make it**. Three reasons drive this:
 
-The UI always states which model produced a given number, rather than implying one model
-answers everything.
+**1. A sequence model needs a sequence.** The LSTM reads a **30-cycle window** to see *how
+fast* an engine is degrading — that trend is exactly what makes it more accurate. But that
+also means it **physically cannot score a single row**: with no history, there is no trend to
+read. The Random Forest, by contrast, predicts from one snapshot of 16 sensors. So the two
+models cover complementary inputs:
 
-The app also stays **self-sufficient**: the LSTM checkpoint is only ~220 KB so it's committed
-directly, while the ~28 MB Random Forest pickle is gitignored and retrained on startup from
-the committed CSV. No external files, no manual steps — clone and run.
+| The user provides… | Model used | Because |
+|---|---|---|
+| An engine's history (Browse mode; CSV with `unit`+`cycle`) | 🧠 **LSTM** | 30+ cycles available → it can read the degradation trajectory |
+| A lone snapshot (Manual input; CSV without engine/cycle) | 🌲 **Random Forest** | no history exists → the LSTM can't run, RF scores the single row |
+
+**2. Accuracy — use the better model whenever possible.** The LSTM (**RMSE 16.19 ± 0.35**)
+beats the Random Forest (**RMSE ≈ 18**), so the app hands *every* history-bearing prediction to
+the LSTM and only falls back to RF when it has no choice. The UI always **names the model that
+answered**, so the headline accuracy is never implied for a prediction it doesn't apply to —
+honest disclosure over a prettier single number.
+
+**3. Robustness & self-sufficiency on deploy.** Keeping the Random Forest also gives the live
+app a **safety net**: `torch` is a heavy dependency, and if it or the checkpoint ever fails to
+load on the free tier, the dashboard still serves predictions via RF instead of crashing.
+Storage-wise the two models fit their roles neatly — the LSTM checkpoint is only ~220 KB so it
+is **committed directly**, while the ~28 MB Random Forest pickle is gitignored and **retrained
+on startup** from the committed CSV. No external files, no manual steps — clone and run.
+
+> **In one line:** the LSTM is the star (used for every real trajectory), and the Random Forest
+> is the utility player — it covers single-snapshot inputs the LSTM can't, and backstops the
+> deployment if torch is unavailable.
 
 ---
 
