@@ -806,8 +806,7 @@ by:
 | | | |
 |---|---|---|
 | **William Frank Mahunda** | **Tom Chatto** | **Gabe Meredith** |
-| **Nish Methuku** | **Alejandro Hernandez** | **Erronn Bridgewater** |
-| **Hunter Ngo** | | |
+| **Nish Methuku** | **Erronn Bridgewater** | **Hunter Ngo** |
 
 From data preprocessing and exploratory analysis to modeling, evaluation, and the
 deployed dashboard — every piece came together through the group's shared work during
