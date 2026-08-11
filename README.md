@@ -14,6 +14,7 @@
 > replacement schedules to **predictive maintenance**.
 
 **🔗 Live app:** **[jet-engineml.streamlit.app](https://jet-engineml.streamlit.app)** &nbsp;·&nbsp;
+**📊 Presentation:** **[Slide deck](https://docs.google.com/presentation/d/1QzA9PUvuROwUNfxtLUXaczG4m1Damv83/edit?slide=id.p1#slide=id.p1)** &nbsp;·&nbsp;
 **▶️ Reproduce it:** **[Colab notebook](https://colab.research.google.com/drive/1qzrg2iQnuTor42PjmQoMWagofw3uq6xi?usp=sharing)**
 
 **🏆 Deployed model:** **LSTM** — **RMSE 16.19 ± 0.35 / MAE 11.59 ± 0.53 / R² 0.850** on
