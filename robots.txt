@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://william-franklyn.github.io/Jet-Engine-Predictive-Maintenance-ML/sitemap.xml
